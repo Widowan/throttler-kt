@@ -1,32 +1,43 @@
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.*
-import kotlin.coroutines.CoroutineContext
 
-class PriceThrottler() : PriceProcessor {
-    private val subscribers: MutableList<PriceProcessor>;
-    private var events: Flow<Event>? = null;
-    private val scope: CoroutineScope;
-
-    data class Event(val ccyPair: String, val rate: Double);
+// Tests are included (in respective folder), gradle build is working
+class PriceThrottler(private val scope: CoroutineScope) : PriceProcessor {
+    private val subscribers: MutableList<PriceProcessor>
+    private val ccyJobsMap: MutableMap<String, MutableList<Pair<Job, PriceProcessor>>>
 
     init {
-        subscribers = ArrayList();
-        scope = CoroutineScope(SupervisorJob());
+        subscribers = ArrayList()
+        ccyJobsMap = HashMap()
     }
 
     override fun onPrice(ccyPair: String?, rate: Double) {
-        ccyPair?.let {
-            subscribers.forEach {
-                scope.launch { it.onPrice(ccyPair, rate) };
-            }
+        ccyPair?.let { ccy ->
+            val jobList = ccyJobsMap.getOrPut(ccy) { ArrayList() }
+            // It won't stop already running code UNLESS it can be stopped
+            // (i.e. it's another coroutine that is currently suspended), which it is not
+            jobList.onEach { pair -> pair.first.cancel() }.clear()
+            jobList += subscribers.map { scope.launch { it.onPrice(ccy, rate) } to it }
         }
     }
 
     override fun subscribe(priceProcessor: PriceProcessor?) {
-        priceProcessor?.let { subscribers += it };
+        priceProcessor?.let { subscribers += it }
     }
 
     override fun unsubscribe(priceProcessor: PriceProcessor?) {
-        priceProcessor?.let { subscribers -= it };
+        priceProcessor?.let {
+            subscribers -= it
+            ccyJobsMap.values.onEach { l ->
+                l
+                    .removeAll { pair ->
+                        if (pair.second == it) {
+                            pair.first.cancel()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+            }
+        }
     }
 }

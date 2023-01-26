@@ -69,6 +69,13 @@ class PriceThrottler(private val scope: CoroutineScope) : PriceProcessor {
     }
 
     override fun unsubscribe(priceProcessor: PriceProcessor?) {
-        priceProcessor?.let { subscribers -= it }
+        priceProcessor?.let { processor ->
+            subscribers -= processor
+            ccyProcessorJobsPairs
+                .values
+                .onEach { processorJobsPairs ->
+                    processorJobsPairs.removeAll { it.first == processor }
+                }
+        }
     }
 }
